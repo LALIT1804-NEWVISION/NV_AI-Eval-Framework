@@ -1,0 +1,6 @@
+framework:
+  name: nv-ai-eval
+  dataset_format: json
+
+reporting:
+  allure_results_dir: allure-results
