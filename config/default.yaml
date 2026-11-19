@@ -1,6 +1,93 @@
-framework:
-  name: nv-ai-eval
-  dataset_format: json
+# =====================================================================================
+# NV AI Eval - default settings (committed to git)
+#
+#   * Personal overrides go in config/local.yaml (git-ignored); it is merged on top of this file.
+#   * Secrets never go here: put them in .env and refer to the variable name.
+#   * Set NV_EVAL_ADAPTER=stub to run without any app (CI does this).
+# =====================================================================================
 
-reporting:
-  allure_results_dir: allure-results
+
+# -------------------------------------------------------------------------------------
+# WHERE THE MODELS RUN (Ollama server)
+#
+# Both the judge and the RAG demo's answering model are served by Ollama, a small
+# server that runs local models. The framework only needs its web address below.
+#
+# WHO NEEDS A MODEL?
+#   Only the real AI tests:  pytest -m llm   (SK-03 real call, SK-04 smoke script, SK-09).
+#   Offline tests and CI (pytest -m "not llm") need no model and no Ollama.
+#
+# -------- OPTION A (default): Ollama on your own laptop --------------------------------
+#   1. Install Ollama
+#        Windows : download the installer from https://ollama.com/download
+#                  or in PowerShell:  irm https://ollama.com/install.ps1 | iex
+#        macOS   : download the app from https://ollama.com/download
+#                  or:  curl -fsSL https://ollama.com/install.sh | sh
+#        Linux   : curl -fsSL https://ollama.com/install.sh | sh
+#   2. Check it:            ollama --version
+#   3. Download the model:  ollama pull qwen2.5:7b       (several GB; one-time)
+#   4. Check the model:     ollama list                   (qwen2.5:7b must be listed)
+#   5. Keep Ollama running (the app, or `ollama serve`). It listens on http://localhost:11434.
+#
+# -------- OPTION B: one shared machine for the whole team ------------------------------
+#   Nobody else installs anything. To switch: comment out the Option A line below and
+#   uncomment the Option B line, putting in the shared machine's address.
+#   (One person only? Put `judge: {base_url: ...}` and `adapter: {rag_demo: {base_url: ...}}`
+#    in your config/local.yaml instead, so the team default stays unchanged.)
+#
+#   On the shared machine (once):
+#     1. Install Ollama and pull qwen2.5:7b as in Option A.
+#     2. Let other machines reach it. By default Ollama only listens on 127.0.0.1:11434;
+#        set OLLAMA_HOST=0.0.0.0:11434 and restart Ollama:
+#          Linux (systemd): systemctl edit ollama.service
+#                           add under [Service]:  Environment="OLLAMA_HOST=0.0.0.0:11434"
+#                           then: systemctl daemon-reload && systemctl restart ollama
+#          macOS app      : launchctl setenv OLLAMA_HOST "0.0.0.0:11434"   then restart the app
+#          Windows        : quit Ollama, add a user environment variable OLLAMA_HOST=0.0.0.0:11434,
+#                           start Ollama again from the Start menu
+#     3. Open port 11434 to the office network/VPN only (firewall). Ollama has no login of its own,
+#        so never expose it to the internet.
+#     4. From your laptop, check:  curl http://<shared-machine-ip>:11434/api/tags
+# -------------------------------------------------------------------------------------
+ollama_url: &ollama_url "http://localhost:11434"                  # OPTION A: your own laptop
+# ollama_url: &ollama_url "http://<shared-machine-ip>:11434"      # OPTION B: one shared machine
+
+
+# -------------------------------------------------------------------------------------
+# APP UNDER TEST (adapter): which app the tests talk to
+# -------------------------------------------------------------------------------------
+adapter:
+  name: rag_demo                # stub | rag_demo     (chatbot added by SK-13)
+  stub:
+    answer: "This is a fixed stub answer."
+  rag_demo:
+    document_path: "apps/rag_demo/documents/ecommerce.txt"
+    model: "qwen2.5:7b"         # the demo app's own answering model (not the judge)
+    base_url: *ollama_url
+    chunk_size: 1
+    use_vector_db: false        # true = also search Chroma: pip install -e ".[vector]"; downloads an embedding model on first use
+    vector_db_path: ".cache/rag_demo_db"
+  # chatbot:                    # PLACEHOLDER (SK-13): filled when the chatbot's API details arrive
+
+
+# -------------------------------------------------------------------------------------
+# JUDGE: the model that scores answers. Not decided yet; qwen2.5:7b on Ollama is the
+# starting point. Changing judge = edit this section only (SK-04).
+# -------------------------------------------------------------------------------------
+judge:
+  provider: ollama              # ollama   (azure_openai: added only if the judge decision picks it)
+  model: "qwen2.5:7b"           # the old repo judged with qwen2.5:3b; SK-09 runs help compare
+  base_url: *ollama_url
+  temperature: 0
+  timeout_seconds: 120          # per judge request
+  max_attempts: 2               # TOTAL tries per judge request (1 try + 1 retry); only timeouts are retried
+
+
+# -------------------------------------------------------------------------------------
+# PASS MARKS: the gate reads these. Starting values until threshold calibration.
+# -------------------------------------------------------------------------------------
+thresholds:
+  answer_relevancy: 0.7
+  faithfulness: 0.7
+
+datasets_dir: "datasets"
